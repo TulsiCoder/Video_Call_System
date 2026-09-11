@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Class Portal</title>
+    <!--Tailwind CSS for an instant , modern UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Livekit Client SDK to handle the actual video connection later -->
+
+</head>
+<body class="bg-slate-900 text-white font-sans min-h-screen flex flex-col justify-center items-center p-6">
+    
+    <!-- Screen 1: Lobby / Join Room (Visible by default) -->
+    <div id="lobby-container" class="bg-slate-800 p-8 rounded-2xl shadow-2xl w-full max-w-md border border-slate-700 transition-all duration-300">
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
+                Virtual Classroom
+            </h1>
+            <p class="text-slate-400 mt-2 text-sm">Enter your details to join the live session</p>
+        </div>
+
+        <form id="join-form" class="space-y-5">
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">your Name</label>
+                <input type="text" id="username" required placeholder="e.g., Prof. Alex" 
+                    class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition">
+            </div>
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Classroom ID</label>
+                <input type="text" id="room-id" required placeholder="e.g., python-101" 
+                    class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition">
+            </div>
+            <button type="submit"
+                class="w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold py-3 rounded-xl shadow-lg transform hover:translate-y-0.5 active:translate-y-0 transition duration-150">
+                Join Classroom
+            </button>
+        </form>
+    </div>
+
+     <!-- Screen 2: The Video room (Hidden by default using 'hidden' class) -->
+      <div id="room-container" class="hidden w-full max-w-5xl h-[80vh] flex flex-col bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 overflow-hidden">
+        <!-- Top Menu Bar -->
+         <div class="bg-slate-800 border-b border-slate-700 px-6 py-4 flex justify-between items-center">
+            <div>
+                <h2 id="display-room-id" class="text-lg font-bold text-white">Classroom: --</h2>
+                <p class="text-xs text-emerald-400 flex items-center gap-1.5 mt-0.5">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Connected to LiveKit Secure Media Mesh
+                </p>
+            </div>
+            <button id="leave-btn" class="bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/20 font-medium px-4 py-2 rounded-xl transition">
+                Leave Class
+            </button>
+         </div>
+
+         <!-- Video Grid Area -->
+          <div class="flex-1 bg-slate-950 p-6 grid grid-cols-1 md:grid-cols-2 gap-6 items-center justify-center overflow-y-auto" id="video-grid">
+            <!-- Video elements will be injected here dynamically via JavaScript later -->
+          </div>
+      </div> 
+
+      <!-- Additional UI Elements or Scripts Can Be Added Here -->
+
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+
+    <script>
+        // 2. Add these lines at the absolute top of your script block to guarantee the variables map
+        window.LiveKit = window.LiveKit || window.LiveKitClient;
+        
+        if (typeof LiveKit === 'undefined' && typeof LiveKitClient !== 'undefined') {
+            var LiveKit = LiveKitClient;
+        }
+
+        // 3. Grab HTML Elements we need to interact with
+        const lobbyContainer = document.getElementById('lobby-container');
+        const roomContainer = document.getElementById('room-container');
+        const joinForm = document.getElementById('join-form');
+        const videoGrid = document.getElementById('video-grid');
+        const displayRoomId = document.getElementById('display-room-id');
+        const leaveBtn = document.getElementById('leave-btn');
+
+        let currentRoom = null;
+
+        // 2. Handle Form Submission (Clicking "Join Classroom")
+        joinForm.addEventListener('submit', async (e) => {
+            e.preventDefault(); // Stop the page from refreshing automatically
+
+            const name = document.getElementById('username').value;
+            const room = document.getElementById('room-id').value;
+
+            try {
+                // 3. Make a standard REST API fetch request to our Django backend
+                const response = await fetch(`/api/token/?room=${encodeURIComponent(room)}&name=${encodeURIComponent(name)}`);
+                
+                if (!response.ok) {
+                    throw new Error('Failed to fetch authentication token from backend.');
+                }
+
+                const data = await response.json();
+                
+                // 4. Update the UI screens
+                lobbyContainer.classList.add('hidden'); // Hide login form
+                roomContainer.classList.remove('hidden'); // Show video layout
+                displayRoomId.innerText = `Classroom: ${room}`;
+
+                // 5. Connect to the LiveKit Media Server Network
+                joinVideoRoom(data.server_url, data.token);
+
+            } catch (error) {
+                alert('Error entering classroom: ' + error.message);
+            }
+        });
+
+        // 6. LiveKit Core Logic: Connect and Handle Video Streams
+        window.LiveKit = window.LiveKit || window.LiveKitClient;
+
+        // Ensure your function maps the global LiveKitClient object properly:
+        async function joinVideoRoom(serverUrl, token) {
+            
+            // Bind the global CDN object to our execution context
+            if (typeof LiveKit === 'undefined' && typeof LiveKitClient !== 'undefined') {
+                LiveKit = LiveKitClient;
+            }
+
+            // Initialize the standard LiveKit Room object
+            currentRoom = new LiveKit.Room({
+                adaptiveStream: true,
+                dynacast: true        
+            });
+
+            // Event A: When a REMOTE participant turns on their camera
+            currentRoom.on(LiveKit.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+                if (track.kind === LiveKit.Track.Kind.Video) {
+                    attachVideoTrack(track, participant);
+                }
+            });
+
+            // Event B: Fixes your black screen! When your own LOCAL camera successfully turns on
+            currentRoom.on(LiveKit.RoomEvent.LocalTrackPublished, (publication, participant) => {
+                if (publication.track && publication.track.kind === LiveKit.Track.Kind.Video) {
+                    attachVideoTrack(publication.track, participant);
+                }
+            });
+
+            // Event C: When anyone turns off their camera or leaves the room
+            currentRoom.on(LiveKit.RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+                if (track.kind === LiveKit.Track.Kind.Video) {
+                    const element = document.getElementById(`video-${participant.identity}`);
+                    if (element) element.remove();
+                }
+            });
+
+            // Connect to the actual media server cloud using our token
+            await currentRoom.connect(serverUrl, token);
+
+            // Turn on our local laptop camera and microphone immediately upon entering
+            await currentRoom.localParticipant.setCameraEnabled(true);
+            await currentRoom.localParticipant.setMicrophoneEnabled(true);
+        }
+
+        // 7. Helper Function: Put the Video Stream into the Tailwind HTML Grid
+        function attachVideoTrack(track, participant) {
+            // Prevent duplicate boxes for the same user
+            if (document.getElementById(`video-${participant.identity}`)) return;
+
+            // Create a wrapper card for the video
+            const card = document.createElement('div');
+            card.id = `video-${participant.identity}`;
+            card.className = "relative bg-slate-900 rounded-xl overflow-hidden aspect-video border border-slate-700 shadow-xl flex items-center justify-center";
+
+            // Create the actual HTML5 video element container
+            const videoElement = track.attach();
+            videoElement.className = "w-full h-full object-cover"; // Fits perfectly inside our grid item
+
+            // Create a styled badge showing the participant's name
+            const nameBadge = document.createElement('div');
+            nameBadge.className = "absolute bottom-3 left-3 bg-slate-950/80 backdrop-blur px-3 py-1 rounded-lg text-xs font-semibold text-white";
+            nameBadge.innerText = participant.identity;
+
+            // Construct the card element hierarchy and inject into our layout grid
+            card.appendChild(videoElement);
+            card.appendChild(nameBadge);
+            videoGrid.appendChild(card);
+        }
+
+        // 8. Handle leaving the class session cleanly
+        leaveBtn.addEventListener('click', () => {
+            if (currentRoom) {
+                currentRoom.disconnect(); // Tell media server we are closing connection
+                videoGrid.innerHTML = ''; // Wipe out video HTML containers
+                roomContainer.classList.add('hidden'); // Flip the screen views
+                lobbyContainer.classList.remove('hidden');
+            }
+        });
+    </script>
+</body>
+</html>
